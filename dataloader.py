@@ -11,7 +11,7 @@ import json
 
 from torchvision import transforms
 
-class Dataset_Dance(torchData):
+class Dataset_Game(torchData):
     """
         Args:
             root (str)      : The path of your Dataset
@@ -63,6 +63,8 @@ class Dataset_Dance(torchData):
                 # read image from the path directly
                 frame = frame[0:-3] + 'webp'
                 self.all_images.append(...) # read jpg image
+                
+                # TODO
                 self.all_labels.append(int(game['price']))
         
 

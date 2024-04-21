@@ -6,10 +6,9 @@ import torch.nn as nn
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from modules import Generator, Gaussian_Predictor, Decoder_Fusion, Label_Encoder, RGB_Encoder
-
-from dataloader import Dataset_Dance
+from dataloader import Dataset_Game
 from torchvision.utils import save_image
+from torchvision.models import resnet50, ResNet50_Weights
 import random
 import torch.optim as optim
 from torch import stack
@@ -28,62 +27,39 @@ def Generate_PSNR(imgs1, imgs2, data_range=1.):
 
      
 
-class VAE_Model(nn.Module):
+class Cla_model(nn.Module):
     def __init__(self, args):
-        super(VAE_Model, self).__init__()
+        super(Cla_model, self).__init__()
         self.args = args
         
-        # Modules to transform image from RGB-domain to feature-domain
-        self.frame_transformation = RGB_Encoder(3, args.F_dim)
-        self.label_transformation = Label_Encoder(3, args.L_dim)
-        
-        # Conduct Posterior prediction in Encoder
-        self.Gaussian_Predictor   = Gaussian_Predictor(args.F_dim + args.L_dim, args.N_dim)
-        self.Decoder_Fusion       = Decoder_Fusion(args.F_dim + args.L_dim + args.N_dim, args.D_out_dim)
-        
-        # Generative model
-        self.Generator            = Generator(input_nc=args.D_out_dim, output_nc=3)
-        
-        self.optim      = optim.Adam(self.parameters(), lr=self.args.lr)
+        self.resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
+        in_ftr = self.resnet.fc.in_features
+        out_ftr = 3
+        self.resnet.fc = nn.Linear(in_ftr, out_ftr, bias=True)
+        self.optim      = optim.Adam(self.resnet.parameters(), lr=self.args.lr)
         self.scheduler  = optim.lr_scheduler.MultiStepLR(self.optim, milestones=[2, 5], gamma=0.1)
-        self.mse_criterion = nn.MSELoss()
+        self.ce_criterion = nn.CrossEntropyLoss()
         self.current_epoch = 0
         
-        # Teacher forcing arguments
-        self.tfr = args.tfr
-        self.tfr_d_step = args.tfr_d_step
-        self.tfr_sde = args.tfr_sde
-        
-        self.train_vi_len = args.train_vi_len
-        self.val_vi_len   = args.val_vi_len
         self.batch_size = args.batch_size
-  
-    def forward(self, img_last, img, label):
-        # TODO
-        img = self.frame_transformation(img)
-        label = self.label_transformation(label)
-        z, mu, logvar = self.Gaussian_Predictor(img, label)
-        
-        img_last = self.frame_transformation(img_last)
-        fused = self.Decoder_Fusion(torch.cat([img_last, label, z], dim=1))
-        out = self.Generator(fused)
-        return out, mu, logvar
         
     def training_stage(self):
         for i in range(self.args.num_epoch):
             train_loader = self.train_dataloader()
-            adapt_TeacherForcing = True if random.random() < self.tfr else False
             print(len(train_loader))
+            total_loss = 0
             for (img, label) in (pbar := tqdm(train_loader, ncols=120)):
                 img = img.to(self.args.device)
                 label = label.to(self.args.device)
-                loss = self.training_one_step(img, label, adapt_TeacherForcing)
+                # training one step
+                self.optim.zero_grad()
+                result = self.resnet(img)
+                loss = self.ce_criterion(result, label)
+                loss.backward()
+                self.optimizer_step()
+                total_loss += loss.item()
                 
-                beta = self.kl_annealing.get_beta()
-                if adapt_TeacherForcing:
-                    self.tqdm_bar('train [TeacherForcing: ON, {:.1f}], beta: {}'.format(self.tfr, beta), pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
-                else:
-                    self.tqdm_bar('train [TeacherForcing: OFF, {:.1f}], beta: {}'.format(self.tfr, beta), pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
+                self.tqdm_bar('train ', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
             
             if self.current_epoch % self.args.per_save == 0:
                 self.save(os.path.join(self.args.save_root, f"epoch={self.current_epoch}.ckpt"))
@@ -91,8 +67,6 @@ class VAE_Model(nn.Module):
             self.eval()
             self.current_epoch += 1
             self.scheduler.step()
-            self.teacher_forcing_ratio_update()
-            self.kl_annealing.update()
     
     def store_parameters(self):
         # save args
@@ -111,25 +85,7 @@ class VAE_Model(nn.Module):
             images, loss = self.val_one_step(img, label)
             self.tqdm_bar('val', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
             self.make_gif(images, os.path.join(self.args.save_root, f"epoch={self.current_epoch}.gif"))
-    
-    def training_one_step(self, img, label, adapt_TeacherForcing):
-        # TODO
-        loss = 0
-        self.optim.zero_grad()
-        for i in range(1, self.train_vi_len):
-            if adapt_TeacherForcing:
-                out, mu, logvar = self.forward(last, img[:, i], label[:, i])
-                last = img[:, i].detach()
-            else:
-                out, mu, logvar = self.forward(last, img[:, i], label[:, i])
-                last = out.detach()
-            mse = self.mse_criterion(out, img[:, i])
-            kld = kl_criterion(mu, logvar, self.batch_size)
-            loss += mse + kld
-            
-        loss.backward()
-        self.optimizer_step()
-        return loss
+
             
     
     def val_one_step(self, img, label):
@@ -144,28 +100,17 @@ class VAE_Model(nn.Module):
                 loss += Generate_PSNR(out, img[:, i])
 
         return images, loss
-                
-    def make_gif(self, images_list, img_name):
-        new_list = []
-        for img in images_list:
-            new_list.append(transforms.ToPILImage()(img))
-            
-        new_list[0].save(img_name, format="GIF", append_images=new_list,
-                    save_all=True, duration=40, loop=0)
-    
     def train_dataloader(self):
-        dataset = Dataset_Dance(root=self.args.DR, mode='train')
-        if self.current_epoch > self.args.fast_train_epoch:
-            self.args.fast_train = False
+        dataset = Dataset_Game(root=self.args.DR, mode='train')
             
         train_loader = DataLoader(dataset,
                                   batch_size=self.batch_size,
                                   num_workers=self.args.num_workers,
-                                  shuffle=False)  
+                                  shuffle=True)  
         return train_loader
     
     def val_dataloader(self):
-        dataset = Dataset_Dance(root=self.args.DR, mode='val')  
+        dataset = Dataset_Game(root=self.args.DR, mode='val')  
         val_loader = DataLoader(dataset,
                                   batch_size=1,
                                   num_workers=self.args.num_workers,
@@ -208,7 +153,7 @@ class VAE_Model(nn.Module):
 def main(args):
     
     os.makedirs(args.save_root, exist_ok=True)
-    model = VAE_Model(args).to(args.device)
+    model = Cla_model(args).to(args.device)
     model.load_checkpoint()
     if args.test:
         model.eval()
