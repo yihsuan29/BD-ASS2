@@ -30,7 +30,6 @@ class Dataset_Dance(torchData):
         # root is the path of JSON file
         with open(root, 'r') as file:
             games_json = json.load(file)
-            
         
         img_h = ? # resize 256
         img_w = ?
@@ -46,43 +45,37 @@ class Dataset_Dance(torchData):
                 transforms.RandomRotation(-10, 10),     # data augmentation
                 transforms.ToTensor()
             ])
-            
+            games_json = games_json[:int(game_number*0.6)]
         elif mode == 'val':
             self.transform = transforms.Compose([
                 transforms.Resize((img_h, img_w)),
                 transforms.ToTensor()
             ])
+            games_json = games_json[int(game_number*0.6):int(game_number*0.8)]
         else:
             self.transform = transforms.Compose([
                 transforms.Resize((img_h, img_w)),
                 transforms.ToTensor()
             ])
+            games_json = games_json[int(game_number*0.8):]
         
+        self.get_img_paths(games_json)
+        
+    def get_img_paths(self, json_file):
+        # iterate through json file, read the paths and the images, return them
+        for game in json_file:
+            for frame in game['screeshots']:
+                # read image from the path directly
+                frame = frame[0:-3] + 'webp'
+                self.all_images.append(...) # read jpg image
+                self.all_labels.append(int(game['price']))
         
 
     def __len__(self):
-        return int(len(self.img_folder) * self.partial) // self.video_len
+        return len(self.img_folder)
 
     def __getitem__(self, index):
-        path = self.img_folder[index]
-        
-        imgs = []
-        labels = []
-        
-        # get a random seed
-        new_seed = torch.randint(0, 100000, (1,)).item()
-        
-        for i in range(self.video_len):
-            label_list = self.img_folder[(index*self.video_len)+i].split('/')
-            label_list[-2] = self.prefix + '_label'
-            
-            img_name    = self.img_folder[(index*self.video_len)+i]
-            label_name = '/'.join(label_list)
-            torch.manual_seed(new_seed)
-            imgs.append(self.transform(imgloader(img_name)))
-            torch.manual_seed(new_seed)
-            labels.append(self.transform(imgloader(label_name)))
-        return stack(imgs), stack(labels)
+        return self.all_images[index], self.all_labels[index]
     
     
 
