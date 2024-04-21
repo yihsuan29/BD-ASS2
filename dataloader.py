@@ -30,10 +30,14 @@ class Dataset_Dance(torchData):
         # root is the path of JSON file
         with open(root, 'r') as file:
             games_json = json.load(file)
+            
         
-        img_h = ?
+        img_h = ? # resize 256
         img_w = ?
         game_number = ? # number of games in json file
+        
+        self.all_images = []
+        self.all_labels = []
         
         if mode == 'train':
             self.transform = transforms.Compose([
@@ -54,8 +58,7 @@ class Dataset_Dance(torchData):
                 transforms.ToTensor()
             ])
         
-        self.partial = partial
-        self.video_len = video_len
+        
 
     def __len__(self):
         return int(len(self.img_folder) * self.partial) // self.video_len
