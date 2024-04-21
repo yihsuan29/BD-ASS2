@@ -11,11 +11,6 @@ import json
 
 from torchvision import transforms
 
-def get_key(fp):
-    filename = fp.split('/')[-1]
-    filename = filename.split('.')[0].replace('frame', '')
-    return int(filename)
-
 class Dataset_Dance(torchData):
     """
         Args:
