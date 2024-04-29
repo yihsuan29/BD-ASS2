@@ -26,9 +26,9 @@ class Dataset_Game(torchData):
         with open(root, 'r') as file:
             games_json = json.load(file)
         
-        img_h = ? # resize 256
-        img_w = ?
-        game_number = ? # number of games in json file
+        img_h = 224
+        img_w = 224
+        game_number = len(games_json)
         
         self.all_images = []
         self.all_labels = []
