@@ -13,19 +13,18 @@ import torch.optim as optim
 from torch import stack
 
 from tqdm import tqdm
-import imageio
 
 import matplotlib.pyplot as plt
 
 
-class Cla_model(nn.Module):
+class Reg_model(nn.Module):
     def __init__(self, args):
-        super(Cla_model, self).__init__()
+        super(Reg_model, self).__init__()
         self.args = args
         
         self.resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
         in_ftr = self.resnet.fc.in_features
-        out_ftr = 3
+        out_ftr = 1
         self.resnet.fc = nn.Linear(in_ftr, out_ftr, bias=True)
         self.optim      = optim.Adam(self.resnet.parameters(), lr=self.args.lr)
         self.scheduler  = optim.lr_scheduler.MultiStepLR(self.optim, milestones=[2, 5], gamma=0.1)
@@ -40,13 +39,14 @@ class Cla_model(nn.Module):
             train_loader = self.train_dataloader()
             print(len(train_loader))
             total_loss = 0
-            for (img, label) in (pbar := tqdm(train_loader, ncols=120)):
+            pbar = tqdm(train_loader, ncols=120)
+            for img, label in pbar:
                 img = img.to(self.device)
                 label = label.to(self.device)
                 # training one step
                 self.optim.zero_grad()
                 result = self.resnet(img)
-                loss = self.ce_criterion(result, label)
+                loss = self.mae_loss(result, label.float())
                 loss.backward()
                 self.optimizer_step()
                 total_loss += loss.item()
@@ -72,15 +72,19 @@ class Cla_model(nn.Module):
     def eval(self):
         val_loader = self.val_dataloader()
         total_loss = 0
-        for (img, label) in (pbar := tqdm(val_loader, ncols=120)):
+        pbar = tqdm(val_loader, ncols=120)
+        for (img, label) in pbar:
             img = img.to(self.device)
             label = label.to(self.device)
             result = self.resnet(img)
-            loss = self.ce_criterion(result, label)
+            loss = self.mae_loss(result, label.float())
             total_loss += loss.item()
             self.tqdm_bar('val', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
         print(f"Epoch {self.current_epoch}, val_loss: {total_loss/len(val_loader)}")
-        
+    
+    def mae_loss(self, outputs, labels):
+        return nn.L1Loss()(outputs.squeeze(), labels)  
+    
     def train_dataloader(self):
         dataset = Dataset_Game(root=self.args.DR, mode='train')
             
@@ -129,36 +133,48 @@ class Cla_model(nn.Module):
 def main(args):
     
     os.makedirs(args.save_root, exist_ok=True)
-    model = Cla_model(args).to(args.device)
+    args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = Reg_model(args).to(args.device)
     model.load_checkpoint()
     if args.test:
         model.eval()
     else:
         model.training_stage()
+        
+    test_loader = model.test_dataloader()
+    predictions = []
+    for (imgs, appids, labels) in tqdm(test_loader, ncols=120):
+        imgs = imgs.to(args.device)
+        outputs = model.resnet(imgs)
+        predictions.append((appids, outputs.cpu().detach().numpy(), labels))
+    
+    # Save predictions
+    with open(os.path.join(args.save_root, 'predictions.json'), 'w') as f:
+        json.dump(predictions, f)
 
 
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument('--batch_size',    type=int,    default=2)
-    parser.add_argument('--lr',            type=float,  default=0.001,     help="initial learning rate")
-    parser.add_argument('--test',          action='store_true')
-    parser.add_argument('--store_visualization',      action='store_true', help="If you want to see the result while training")
-    parser.add_argument('--DR',            type=str, required=True,  help="Your Dataset Path")
-    parser.add_argument('--save_root',     type=str, required=True,  help="The path to save your data")
-    parser.add_argument('--num_workers',   type=int, default=4)
-    parser.add_argument('--num_epoch',     type=int, default=70,     help="number of total epoch")
-    parser.add_argument('--per_save',      type=int, default=3,      help="Save checkpoint every seted epoch")
-    parser.add_argument('--frame_H',       type=int, default=32,     help="Height input image to be resize")
-    parser.add_argument('--frame_W',       type=int, default=64,     help="Width input image to be resize")
+# if __name__ == '__main__':
+#     parser = argparse.ArgumentParser(add_help=True)
+#     parser.add_argument('--batch_size',    type=int,    default=2)
+#     parser.add_argument('--lr',            type=float,  default=0.001,     help="initial learning rate")
+#     parser.add_argument('--test',          action='store_true')
+#     parser.add_argument('--store_visualization',      action='store_true', help="If you want to see the result while training")
+#     parser.add_argument('--DR',            type=str, required=True,  help="Your Dataset Path")
+#     parser.add_argument('--save_root',     type=str, required=True,  help="The path to save your data")
+#     parser.add_argument('--num_workers',   type=int, default=4)
+#     parser.add_argument('--num_epoch',     type=int, default=70,     help="number of total epoch")
+#     parser.add_argument('--per_save',      type=int, default=3,      help="Save checkpoint every seted epoch")
+#     parser.add_argument('--frame_H',       type=int, default=32,     help="Height input image to be resize")
+#     parser.add_argument('--frame_W',       type=int, default=64,     help="Width input image to be resize")
     
     
-    parser.add_argument('--ckpt_path',     type=str,    default=None,help="The path of your checkpoints")   
+#     parser.add_argument('--ckpt_path',     type=str,    default=None,help="The path of your checkpoints")   
     
 
     
 
-    args = parser.parse_args()
+#     args = parser.parse_args()
     
-    main(args)
+#     main(args)

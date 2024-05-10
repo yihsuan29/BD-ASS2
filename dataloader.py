@@ -26,8 +26,8 @@ class Dataset_Game(torchData):
         with open(root, 'r') as file:
             games_json = json.load(file)
         
-        img_h = 224
-        img_w = 224
+        img_h = 256
+        img_w = 512
         game_number = len(games_json)
         
         self.all_images = []
@@ -62,7 +62,9 @@ class Dataset_Game(torchData):
             for frame in game['screeshots']:
                 # read image from the path directly
                 frame = frame[0:-3] + 'webp'
-                self.all_images.append(...) # read jpg image
+                image = imgloader(frame)
+                image = self.transform(image)
+                self.all_images.append(image) # read jpg image
                 
                 # TODO
                 self.all_labels.append(int(game['price']))
