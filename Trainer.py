@@ -4,14 +4,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-
+from torch.utils.tensorboard import SummaryWriter
 from dataloader import Dataset_Game
 from torchvision.utils import save_image
 from torchvision.models import resnet50, ResNet50_Weights
 import random
 import torch.optim as optim
 from torch import stack
-
+import json
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
@@ -27,17 +27,17 @@ class Reg_model(nn.Module):
         out_ftr = 1
         self.resnet.fc = nn.Linear(in_ftr, out_ftr, bias=True)
         self.optim      = optim.Adam(self.resnet.parameters(), lr=self.args.lr)
-        self.scheduler  = optim.lr_scheduler.MultiStepLR(self.optim, milestones=[2, 5], gamma=0.1)
+        self.scheduler  = optim.lr_scheduler.MultiStepLR(self.optim, milestones=[2, 4, 8, 15], gamma=0.1)
         self.ce_criterion = nn.CrossEntropyLoss()
         self.current_epoch = 0
-        
+        self.writer = SummaryWriter(args.save_root)
         self.batch_size = args.batch_size
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = args.device
         
     def training_stage(self):
         for i in range(self.args.num_epoch):
             train_loader = self.train_dataloader()
-            print(len(train_loader))
+            # print(len(train_loader))
             total_loss = 0
             pbar = tqdm(train_loader, ncols=120)
             for img, label in pbar:
@@ -46,17 +46,20 @@ class Reg_model(nn.Module):
                 # training one step
                 self.optim.zero_grad()
                 result = self.resnet(img)
+                #result = torch.clamp(result, -1, 600000)
                 loss = self.mae_loss(result, label.float())
                 loss.backward()
-                self.optimizer_step()
+                self.optim.step()
                 total_loss += loss.item()
                 
                 self.tqdm_bar('train ', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
-            
-            if self.current_epoch % self.args.per_save == 0:
-                self.save(os.path.join(self.args.save_root, f"epoch={self.current_epoch}.ckpt"))
+            print('training loss:', total_loss/len(train_loader))
+            self.writer.add_scalar('train/loss', total_loss/len(train_loader), self.current_epoch)
+            if (self.current_epoch+1) % self.args.per_save == 0:
+                self.save(os.path.join(self.args.save_root, f"epoch_{self.current_epoch}.ckpt"))
                 
-            self.eval()
+            eval_acc = self.eval()
+            self.writer.add_scalar('val/loss', eval_acc, self.current_epoch)
             self.current_epoch += 1
             self.scheduler.step()
     
@@ -73,17 +76,21 @@ class Reg_model(nn.Module):
         val_loader = self.val_dataloader()
         total_loss = 0
         pbar = tqdm(val_loader, ncols=120)
-        for (img, label) in pbar:
-            img = img.to(self.device)
-            label = label.to(self.device)
-            result = self.resnet(img)
-            loss = self.mae_loss(result, label.float())
-            total_loss += loss.item()
-            self.tqdm_bar('val', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
+        with torch.no_grad():
+            for (img, label) in pbar:
+                img = img.to(self.device)
+                label = label.to(self.device)
+                result = self.resnet(img)
+                loss = self.mae_loss(result, label.float())
+                total_loss += loss.item()
+                self.tqdm_bar('val', pbar, loss.detach().cpu(), lr=self.scheduler.get_last_lr()[0])
         print(f"Epoch {self.current_epoch}, val_loss: {total_loss/len(val_loader)}")
+        return total_loss/len(val_loader)
     
     def mae_loss(self, outputs, labels):
-        return nn.L1Loss()(outputs.squeeze(), labels)  
+        criterion = nn.MSELoss()
+        # print(outputs)
+        return criterion(outputs, labels.unsqueeze(-1))  
     
     def train_dataloader(self):
         dataset = Dataset_Game(root=self.args.DR, mode='train')
@@ -97,7 +104,7 @@ class Reg_model(nn.Module):
     def val_dataloader(self):
         dataset = Dataset_Game(root=self.args.DR, mode='val')  
         val_loader = DataLoader(dataset,
-                                  batch_size=1,
+                                  batch_size=16,
                                   num_workers=self.args.num_workers,
                                   shuffle=False)  
         return val_loader
@@ -133,25 +140,27 @@ class Reg_model(nn.Module):
 def main(args):
     
     os.makedirs(args.save_root, exist_ok=True)
-    args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    args.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     model = Reg_model(args).to(args.device)
     model.load_checkpoint()
     if args.test:
         model.eval()
     else:
         model.training_stage()
-        
-    test_loader = model.test_dataloader()
-    predictions = []
-    for (imgs, appids, labels) in tqdm(test_loader, ncols=120):
-        imgs = imgs.to(args.device)
-        outputs = model.resnet(imgs)
-        predictions.append((appids, outputs.cpu().detach().numpy(), labels))
     
-    # Save predictions
-    with open(os.path.join(args.save_root, 'predictions.json'), 'w') as f:
-        json.dump(predictions, f)
-
+    test_dataset = Dataset_Game(root=args.DR, mode='test')
+    test_loader = DataLoader(test_dataset, batch_size=1, num_workers=args.num_workers, shuffle=False)
+    mses = 0
+    with torch.no_grad():
+        for (imgs, labels) in tqdm(test_loader, ncols=120):
+            scores = []
+            for i in range(imgs.shape[0]):
+                img = imgs[i].unsqueeze(0).to(args.device)
+                output = model.resnet(img)
+                scores.append(output.cpu().detach().numpy().item())
+            average = np.mean(scores)
+            mses += (average - labels[0].item()) ** 2
+    mses /= len(test_loader)
 
 
 

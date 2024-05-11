@@ -5,11 +5,11 @@ from Trainer import main as train_model
 
 def main():
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument('--batch_size',    type=int,    default=2)
-    parser.add_argument('--lr',            type=float,  default=0.001,     help="initial learning rate")
+    parser.add_argument('--batch_size',    type=int,    default=32)
+    parser.add_argument('--lr',            type=float,  default=1e-3,     help="initial learning rate")
     parser.add_argument('--test',          action='store_true')
     parser.add_argument('--store_visualization',      action='store_true', help="If you want to see the result while training")
-    parser.add_argument('--DR',            type=str, required=True,  help="Your Dataset Path")
+    parser.add_argument('--DR',            type=str, default='images/',  help="Your Dataset Path")
     parser.add_argument('--save_root',     type=str, required=True,  help="The path to save your data")
     parser.add_argument('--num_workers',   type=int, default=4)
     parser.add_argument('--num_epoch',     type=int, default=70,     help="number of total epoch")
@@ -23,3 +23,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
