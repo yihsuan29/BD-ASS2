@@ -252,7 +252,6 @@ class Reg_model(nn.Module):
 
 
 
-
 def main(args):
     
     os.makedirs(args.save_root, exist_ok=True)
@@ -269,17 +268,36 @@ def main(args):
     
     test_dataset = Dataset_Game(root=args.DR, mode='test',task=args.task)
     test_loader = DataLoader(test_dataset, batch_size=1, num_workers=args.num_workers, shuffle=False)
-    mses = 0
-    with torch.no_grad():
-        for (imgs, labels) in tqdm(test_loader, ncols=120):
-            scores = []
-            for i in range(imgs.shape[0]):
-                img = imgs[i].unsqueeze(0).to(args.device)
-                output = model.resnet(img)
-                scores.append(output.cpu().detach().numpy().item())
-            average = np.mean(scores)
-            mses += (average - labels[0].item()) ** 2
-    mses /= len(test_loader)
+    if args.task=='Cla':        
+        all_labels = []
+        all_preds = []
+        with torch.no_grad():
+            for (imgs, labels) in tqdm(test_loader, ncols=120):
+                preds = []
+                for i in range(imgs.shape[0]):
+                    img = imgs[i].unsqueeze(0).to(args.device)
+                    output = model.resnet(img)
+                    preds.append(output.cpu().detach().numpy().item())
+                mode_pred = np.argmax(np.bincount(preds))
+                all_preds.append(mode_pred)
+                all_labels.append(labels[0].item())
+
+        weighted_f1 = f1_score(all_labels, all_preds, average='weighted')
+        mae = mean_absolute_error(all_labels, all_preds)  
+        print("weighted_f1:",weighted_f1)
+        print("mae:",mae)
+    else:        
+        mses = 0
+        with torch.no_grad():
+            for (imgs, labels) in tqdm(test_loader, ncols=120):
+                scores = []
+                for i in range(imgs.shape[0]):
+                    img = imgs[i].unsqueeze(0).to(args.device)
+                    output = model.resnet(img)
+                    scores.append(output.cpu().detach().numpy().item())
+                average = np.mean(scores)
+                mses += (average - labels[0].item()) ** 2
+        mses /= len(test_loader)
 
 
 
