@@ -19,11 +19,12 @@ class Dataset_Game(torchData):
             mode (str)      : train, val, test
             partial (float) : Percentage of your Dataset, may set to use part of the dataset
     """
-    def __init__(self, root, mode='train'):
+    def __init__(self, root, mode='train',task='Cla'):
         super().__init__()
         assert mode in ['train', 'val', 'test'], "There is no such mode !!!"
         self.root = root
         self.mode = mode
+        self.task = task
         root = os.path.join(root, 'dataset.json')
         # root is the path of JSON file
         with open(root, 'r') as file:
@@ -38,7 +39,7 @@ class Dataset_Game(torchData):
         
         
         self.game_number = 0
-        self.get_img_paths(games_json)
+        self.get_img_paths(games_json,)
         
         if mode == 'train':
             self.transform = transforms.Compose([
@@ -64,7 +65,7 @@ class Dataset_Game(torchData):
     def get_img_paths(self, json_file):
         # iterate through json file, read the paths and the images, return them
         for game in json_file:
-            if int(game['price']) >= 2500:
+            if self.task == "Cla" and game.get('sentiment') is None:
                 continue
             self.game_number += 1
             if self.mode != 'test':
@@ -75,9 +76,11 @@ class Dataset_Game(torchData):
                     # image = imgloader(frame)
                     # image = self.transform(image)
                     self.all_images.append(frame) # read jpg image
-                    
-                    # TODO
-                self.all_labels.append(int(game['price']))
+                if self.task == "Cla":
+                    sentiment_label = self.map_sentiment(game['sentiment'])
+                    self.all_labels.append(sentiment_label)
+                else:
+                    self.all_labels.append(int(game['price']))
             else:
                 temp_img = []
                 temp_label = []
@@ -87,7 +90,11 @@ class Dataset_Game(torchData):
                     image = imgloader(frame)
                     image = self.transform(image)
                     temp_img.append(image)
-                    temp_label.append(int(game['price']))
+                    if self.task == "Cla":
+                        sentiment_label = self.map_sentiment(game['sentiment'])
+                        temp_label.append(sentiment_label)
+                    else:
+                        temp_label.append(int(game['price']))
                 self.all_images.append(temp_img)
                 self.all_labels.append(temp_label)
         
@@ -100,6 +107,20 @@ class Dataset_Game(torchData):
         img = self.transform(img)
         img /= 255.0
         return img, self.all_labels[index]
+    
+    def map_sentiment(self, sentiment):
+        SENTIMENT_MAP = {
+            'Overwhelmingly Positive': 8,
+            'Very Positive': 7,
+            'Positive': 6,
+            'Mostly Positive': 5,
+            'Mixed': 4,
+            'Mostly Negative': 3,
+            'Negative': 2,
+            'Very Negative': 1,
+            'Overwhelmingly Negative': 0
+        }
+        return SENTIMENT_MAP.get(sentiment, 0)    
     
     
 
